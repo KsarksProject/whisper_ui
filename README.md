@@ -45,8 +45,8 @@ pip install -r requirements.txt
 # Для MacOS
 # brew install ffmpeg
 ```
-Для Windows - смотрте редми по установке ffmpeg
-
+Для Windows - смотрте описание по установке ffmpeg
+[смотрте описание по установке ffmpeg](ffmpeg_install.md) 
 
 ## 💻 Запуск
 
