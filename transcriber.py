@@ -46,37 +46,43 @@ def convert_video_to_audio(video_path):
         logger.error(error_msg)
         return None
 
-
 def initialize_model(model_id):
-    logger.info(f"Инициализация модели: {model_id}")
+    """Инициализация модели для транскрибации"""
+    try:
+        logger.info(f"Инициализация модели: {model_id}")
 
-    device = "cuda:0" if torch.cuda.is_available() else "cpu"
-    torch_dtype = torch.float16 if torch.cuda.is_available() else torch.float32
+        device = "cuda:0" if torch.cuda.is_available() else "cpu"
+        torch_dtype = torch.float16 if torch.cuda.is_available() else torch.float32
 
-    model = AutoModelForSpeechSeq2Seq.from_pretrained(
-        model_id, torch_dtype=torch_dtype
-    )
-    model.to(device)
+        logger.info(f"Используемое устройство: {device}")
 
-    processor = AutoProcessor.from_pretrained(model_id)
-    processor.tokenizer.pad_token = processor.tokenizer.eos_token  # Исправление pad_token
+        model = AutoModelForSpeechSeq2Seq.from_pretrained(
+            model_id, torch_dtype=torch_dtype, low_cpu_mem_usage=True
+        )
+        model.to(device)
 
-    pipe = pipeline(
-        "automatic-speech-recognition",
-        model=model,
-        tokenizer=processor.tokenizer,
-        feature_extractor=processor.feature_extractor,
-        chunk_length_s=30,
-        batch_size=16,
-        torch_dtype=torch_dtype,
-        device=device,
-        language='russian',  # Указание русского языка
-        task="transcribe"  # Транскрипция (а не перевод)
-    )
+        logger.info(f"Модель загружена на: {device}")
 
-    logger.info("Модель инициализирована успешно")
-    return pipe
+        processor = AutoProcessor.from_pretrained(model_id)
 
+        pipe = pipeline(
+            "automatic-speech-recognition",
+            model=model,
+            tokenizer=processor.tokenizer,
+            feature_extractor=processor.feature_extractor,
+            chunk_length_s=30,
+            batch_size=16,
+            torch_dtype=torch_dtype,
+            device=device,
+        )
+
+        logger.info("Модель инициализирована успешно")
+        return pipe
+
+    except Exception as e:
+        error_msg = f"Ошибка инициализации модели: {e}"
+        logger.error(error_msg)
+        return None
 
 def transcribe_media(media_file, model_name):
     """Функция транскрибации аудио/видео"""
