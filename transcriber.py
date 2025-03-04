@@ -5,8 +5,10 @@ import os
 import tempfile
 import logging
 import warnings
-
+import difflib
+from lxml import etree
 from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor, pipeline
+from diff_match_patch import diff_match_patch
 
 # Отключение предупреждений о будущем устаревании
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -26,138 +28,104 @@ MODELS = [
 ]
 
 def convert_video_to_audio(video_path):
-    """
-    Конвертация видео файла в аудио
-    """
     try:
         logger.info("Начало конвертации видео в аудио...")
-
         with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as temp_audio:
             video = mp.VideoFileClip(video_path)
             audio = video.audio
             audio.write_audiofile(temp_audio.name)
             audio.close()
             video.close()
-
             logger.info("Конвертация видео завершена успешно")
             return temp_audio.name
     except Exception as e:
-        error_msg = f"Ошибка конвертации: {e}"
-        logger.error(error_msg)
+        logger.error(f"Ошибка конвертации: {e}")
         return None
 
 def initialize_model(model_id):
-    """Инициализация модели для транскрибации"""
     try:
         logger.info(f"Инициализация модели: {model_id}")
-
         device = "cuda:0" if torch.cuda.is_available() else "cpu"
         torch_dtype = torch.float16 if torch.cuda.is_available() else torch.float32
-
-        logger.info(f"Используемое устройство: {device}")
-
-        model = AutoModelForSpeechSeq2Seq.from_pretrained(
-            model_id, torch_dtype=torch_dtype, low_cpu_mem_usage=True
-        )
+        model = AutoModelForSpeechSeq2Seq.from_pretrained(model_id, torch_dtype=torch_dtype, low_cpu_mem_usage=True)
         model.to(device)
-
-        logger.info(f"Модель загружена на: {device}")
-
         processor = AutoProcessor.from_pretrained(model_id)
-
-        pipe = pipeline(
-            "automatic-speech-recognition",
-            model=model,
-            tokenizer=processor.tokenizer,
-            feature_extractor=processor.feature_extractor,
-            chunk_length_s=30,
-            batch_size=16,
-            torch_dtype=torch_dtype,
-            device=device,
-        )
-
-        logger.info("Модель инициализирована успешно")
+        pipe = pipeline("automatic-speech-recognition", model=model, tokenizer=processor.tokenizer,
+                        feature_extractor=processor.feature_extractor, chunk_length_s=30, batch_size=16,
+                        torch_dtype=torch_dtype, device=device)
         return pipe
-
     except Exception as e:
-        error_msg = f"Ошибка инициализации модели: {e}"
-        logger.error(error_msg)
+        logger.error(f"Ошибка инициализации модели: {e}")
         return None
 
 def transcribe_media(media_file, model_name):
-    """Функция транскрибации аудио/видео"""
     try:
         logger.info("Начало транскрибации...")
-
         file_extension = os.path.splitext(media_file)[1].lower()
-
         if file_extension in ['.mp4', '.avi', '.mov', '.mkv']:
             media_file = convert_video_to_audio(media_file)
             if not media_file:
-                logger.error("Ошибка конвертации видео")
                 return ""
-
-        logger.info(f"Выбрана модель: {model_name}")
         pipe = initialize_model(model_name)
-
         if not pipe:
-            logger.error("Не удалось инициализировать модель")
             return ""
-
-        logger.info("Выполнение транскрибации...")
-
-        result = pipe(
-            media_file,
-            max_new_tokens=440,
-            return_timestamps=True
-        )
-
+        result = pipe(media_file, max_new_tokens=440, return_timestamps=True)
         if file_extension in ['.mp4', '.avi', '.mov', '.mkv']:
             os.unlink(media_file)
-
-        logger.info("Транскрибация завершена успешно")
         return result["text"]
-
     except Exception as e:
-        error_msg = f"Ошибка транскрибации: {str(e)}"
-        logger.error(error_msg)
+        logger.error(f"Ошибка транскрибации: {e}")
         return ""
 
 def save_transcript(transcript):
-    """Создание файла для скачивания транскрипта"""
     try:
-        logger.info("Создание файла транскрипта...")
-
         with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt', encoding='utf-8') as temp_file:
             temp_file.write(transcript)
-            temp_file_path = temp_file.name
-
-        logger.info(f"Файл сохранен: {temp_file_path}")
-        return temp_file_path
+            return temp_file.name
     except Exception as e:
-        error_msg = f"Ошибка создания файла: {str(e)}"
-        logger.error(error_msg)
+        logger.error(f"Ошибка создания файла: {e}")
         return None
 
-# Создание Gradio интерфейса
+def highlight_differences(xml1, xml2):
+    dmp = diff_match_patch()
+    diffs = dmp.diff_main(xml1, xml2)
+    dmp.diff_cleanupSemantic(diffs)
+    highlighted_xml1 = "".join(f"<span style='background-color: #ff9999'>{d[1]}</span>" if d[0] == -1 else d[1] for d in diffs)
+    highlighted_xml2 = "".join(f"<span style='background-color: #99ff99'>{d[1]}</span>" if d[0] == 1 else d[1] for d in diffs)
+    return highlighted_xml1, highlighted_xml2
+
+def compare_xml_files(file1_path, file2_path):
+    try:
+        with open(file1_path, 'r', encoding='utf-8') as file1, open(file2_path, 'r', encoding='utf-8') as file2:
+            xml1 = file1.read()
+            xml2 = file2.read()
+        diff1, diff2 = highlight_differences(xml1, xml2)
+        return f"<h3>Файл 1</h3><pre>{diff1}</pre>", f"<h3>Файл 2</h3><pre>{diff2}</pre>"
+    except Exception as e:
+        return f"Ошибка сравнения: {e}", ""
+
 def create_interface():
     with gr.Blocks() as demo:
         gr.Markdown("# Транскрибация аудио и видео")
-
         with gr.Row():
             media_input = gr.File(label="Загрузите аудио или видео файл", type="filepath", file_types=["audio", "video"])
             model_dropdown = gr.Dropdown(choices=MODELS, value=MODELS[0], label="Выберите модель")
-
         transcribe_btn = gr.Button("Транскрибировать")
         transcript_output = gr.Textbox(label="Транскрипт", lines=10)
         save_btn = gr.Button("Сохранить транскрипт")
-
         transcribe_btn.click(fn=transcribe_media, inputs=[media_input, model_dropdown], outputs=transcript_output)
         save_btn.click(fn=save_transcript, inputs=transcript_output, outputs=gr.File(label="Скачать транскрипт"))
-
+        gr.Markdown("# Сравнение XML-файлов")
+        with gr.Row():
+            xml_file1 = gr.File(label="Загрузите первый XML-файл", type="filepath")
+            xml_file2 = gr.File(label="Загрузите второй XML-файл", type="filepath")
+        compare_btn = gr.Button("Сравнить")
+        with gr.Row():
+            diff_output1 = gr.HTML(label="Результат сравнения (Файл 1)")
+            diff_output2 = gr.HTML(label="Результат сравнения (Файл 2)")
+        compare_btn.click(fn=compare_xml_files, inputs=[xml_file1, xml_file2], outputs=[diff_output1, diff_output2])
     return demo
 
-# Запуск интерфейса
 if __name__ == "__main__":
     interface = create_interface()
     interface.launch(server_name="0.0.0.0", server_port=7860, share=False)
