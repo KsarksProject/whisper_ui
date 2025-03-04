@@ -15,14 +15,6 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s: %(m
 logger = logging.getLogger(__name__)
 
 MODELS = ["openai/whisper-base", "openai/whisper-medium", "openai/whisper-large-v3"]
-LANGUAGES = {
-    "Русский": "ru",
-    "Английский": "en",
-    "Французский": "fr",
-    "Испанский": "es",
-    "Немецкий": "de",
-    "Китайский": "zh"
-}
 
 def convert_video_to_audio(video_path):
     """Конвертирует видео в аудио и сохраняет его в mp3."""
@@ -69,35 +61,55 @@ def initialize_model(model_id):
         logger.error(f"Ошибка инициализации модели: {e}")
         return None
 
-def transcribe_media(media_file, model_name, language):
+def detect_language(audio_path, model):
+    """Определяет язык аудио перед транскрибацией"""
     try:
-        logger.info(f"Транскрибация началась (язык: {language})...")
+        result = model(audio_path, return_timestamps=True)
+        detected_lang = result.get("language", None)
+
+        if detected_lang:
+            logger.info(f"Определён язык: {detected_lang}")
+            return detected_lang
+        else:
+            logger.warning("Язык не определён, будет использоваться автоматическое распознавание.")
+            return None
+
+    except Exception as e:
+        logger.error(f"Ошибка определения языка: {e}")
+        return None
+
+def transcribe_media(media_file, model_name):
+    try:
+        logger.info(f"Транскрибация началась...")
         file_extension = os.path.splitext(media_file)[1].lower()
 
         audio_path = media_file
         if file_extension in ['.mp4', '.avi', '.mov', '.mkv']:
             audio_path = convert_video_to_audio(media_file)
             if not audio_path:
-                return "Ошибка: не удалось обработать видео", None
+                return "Ошибка: не удалось обработать видео", "Не определён", None
 
         pipe = initialize_model(model_name)
         if not pipe:
-            return "Ошибка: не удалось загрузить модель", None
+            return "Ошибка: не удалось загрузить модель", "Не определён", None
 
-        result = pipe(
-            audio_path,
-            generate_kwargs={"task": "transcribe", "language": LANGUAGES[language]},
-            max_new_tokens=440,
-            return_timestamps=True
-        )
+        # Определяем язык перед транскрибацией
+        detected_language = detect_language(audio_path, pipe)
 
+        # Если язык не определился, не передаём параметр language
+        transcribe_kwargs = {"task": "transcribe"}
+        if detected_language:
+            transcribe_kwargs["language"] = detected_language
+
+        # Запускаем распознавание
+        result = pipe(audio_path, generate_kwargs=transcribe_kwargs, return_timestamps=True)
         transcript_text = result.get("text", "Ошибка: текст не распознан")
 
-        return transcript_text, audio_path
+        return transcript_text, detected_language or "Автоопределение", audio_path
 
     except Exception as e:
         logger.error(f"Ошибка транскрибации: {str(e)}")
-        return f"Ошибка: {str(e)}", None
+        return f"Ошибка: {str(e)}", "Ошибка", None
 
 def highlight_search(text, query):
     """Функция подсветки найденных слов красным"""
@@ -109,24 +121,24 @@ def highlight_search(text, query):
 
 def transcription_interface():
     with gr.Blocks() as interface:
-        gr.Markdown("## Транскрибация аудио и видео")
+        gr.Markdown("## Транскрибация аудио и видео с автодетекцией языка")
 
         media_input = gr.File(label="Загрузите аудио или видео файл", type="filepath")
         model_dropdown = gr.Dropdown(choices=MODELS, value=MODELS[0], label="Выберите модель")
-        language_dropdown = gr.Dropdown(choices=list(LANGUAGES.keys()), value="Русский", label="Выберите язык")
 
         transcribe_btn = gr.Button("Транскрибировать")
         transcript_output = gr.Textbox(label="Транскрипт", lines=10)
+        detected_language_output = gr.Textbox(label="Определённый язык", interactive=False)
         audio_output = gr.File(label="Скачать аудиофайл")
 
         search_input = gr.Textbox(label="Поиск по транскрипции", placeholder="Введите слово для поиска")
         search_btn = gr.Button("Найти")
-        search_output = gr.HTML(label="Результаты поиска")  # Используем HTML для стилизации текста
+        search_output = gr.HTML(label="Результаты поиска")
 
         transcribe_btn.click(
             fn=transcribe_media,
-            inputs=[media_input, model_dropdown, language_dropdown],
-            outputs=[transcript_output, audio_output]
+            inputs=[media_input, model_dropdown],
+            outputs=[transcript_output, detected_language_output, audio_output]
         )
 
         search_btn.click(
