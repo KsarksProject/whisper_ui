@@ -3,37 +3,44 @@ import yt_dlp
 import os
 import tempfile
 
-def download_youtube_video(url):
+
+def download_youtube(url, download_playlist):
     try:
         temp_dir = tempfile.mkdtemp()
         output_template = os.path.join(temp_dir, '%(title)s.%(ext)s')
 
+        # Настройки для yt-dlp
         ydl_opts = {
-            'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]',  # Только MP4
             'outtmpl': output_template,
-            'merge_output_format': 'mp4',  # Принудительное сохранение в MP4
-            'postprocessors': [{
-                'key': 'FFmpegVideoConvertor',
-                'preferedformat': 'mp4'
-            }]
+            'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]',  # Только MP4
+            'merge_output_format': 'mp4',
+            'noplaylist': not download_playlist  # Если выбрано скачивание плейлиста, включаем его
         }
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
-            file_path = ydl.prepare_filename(info).replace('.webm', '.mp4').replace('.mkv', '.mp4')
 
-        return file_path
+            # Если скачивается плейлист, возвращаем список файлов
+            if 'entries' in info:
+                file_paths = [ydl.prepare_filename(entry).replace('.webm', '.mp4') for entry in info['entries']]
+            else:
+                file_paths = [ydl.prepare_filename(info).replace('.webm', '.mp4')]
+
+        return file_paths
 
     except Exception as e:
         return f"Ошибка загрузки: {e}"
 
+
 def youtube_downloader_interface():
     with gr.Blocks() as interface:
-        gr.Markdown("## Скачивание YouTube-видео в MP4")
-        url_input = gr.Textbox(label="Введите ссылку на YouTube", placeholder="https://www.youtube.com/watch?v=...")
-        download_btn = gr.Button("Скачать видео")
-        output_file = gr.File(label="Скачать")
+        gr.Markdown("## Скачивание YouTube-видео и плейлистов")
 
-        download_btn.click(fn=download_youtube_video, inputs=url_input, outputs=output_file)
+        url_input = gr.Textbox(label="Введите ссылку на YouTube", placeholder="https://www.youtube.com/watch?v=...")
+        download_playlist = gr.Checkbox(label="Скачать весь плейлист?", value=False)
+        download_btn = gr.Button("Скачать")
+        output_files = gr.File(label="Скачать")
+
+        download_btn.click(fn=download_youtube, inputs=[url_input, download_playlist], outputs=output_files)
 
     return interface
