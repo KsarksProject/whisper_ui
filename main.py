@@ -3,6 +3,7 @@ from transcription import transcription_interface
 from xml_comparator import xml_comparator_interface
 from youtube_downloader import youtube_downloader_interface
 from json_comparator import json_comparator_interface
+from text_analysis import text_analysis_interface  # Новый модуль
 
 def create_main_interface():
     with gr.Blocks() as demo:
@@ -17,6 +18,8 @@ def create_main_interface():
                 json_comparator_interface()
             with gr.Tab("Скачивание YouTube-видео"):
                 youtube_downloader_interface()
+            with gr.Tab("Анализ текста с AI"):  # Новая вкладка
+                text_analysis_interface()
 
     return demo
 
